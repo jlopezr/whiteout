@@ -1,30 +1,84 @@
 import Cocoa
 import QuartzCore
 
-final class ExitView: NSView {
+final class WhiteWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+}
+
+final class OverlayView: NSView {
     private let lineLayer = CALayer()
     private let lineWidth: CGFloat = 4.0
     private let slideDuration: CFTimeInterval = 8.0
 
+    private enum DisplayMode: CaseIterable {
+        case white
+        case greyBlack
+        case blackWhite
+
+        var backgroundColor: NSColor {
+            switch self {
+            case .white:
+                return .white
+            case .greyBlack:
+                return NSColor(calibratedWhite: 0.6, alpha: 1.0)
+            case .blackWhite:
+                return .black
+            }
+        }
+
+        var lineColor: NSColor {
+            switch self {
+            case .white:
+                return NSColor(calibratedWhite: 0.15, alpha: 1.0)
+            case .greyBlack:
+                return .black
+            case .blackWhite:
+                return .white
+            }
+        }
+    }
+
+    private var mode: DisplayMode = .white
+
     override var acceptsFirstResponder: Bool { true }
 
     override func viewDidMoveToWindow() {
-        window?.makeFirstResponder(self)
+        super.viewDidMoveToWindow()
         wantsLayer = true
         setupLineLayer()
+        applyCurrentMode()
+        window?.makeFirstResponder(self)
     }
 
     private func setupLineLayer() {
         guard let layer = self.layer else { return }
 
-        lineLayer.backgroundColor = NSColor(calibratedWhite: 0.15, alpha: 1.0).cgColor
         lineLayer.frame = CGRect(x: -lineWidth, y: 0, width: lineWidth, height: bounds.height)
-        layer.addSublayer(lineLayer)
+        if lineLayer.superlayer == nil {
+            layer.addSublayer(lineLayer)
+        }
         startSlideAnimation()
     }
 
+    private func applyCurrentMode() {
+        layer?.backgroundColor = mode.backgroundColor.cgColor
+        lineLayer.backgroundColor = mode.lineColor.cgColor
+    }
+
+    private func cycleMode() {
+        switch mode {
+        case .white:
+            mode = .greyBlack
+        case .greyBlack:
+            mode = .blackWhite
+        case .blackWhite:
+            mode = .white
+        }
+        applyCurrentMode()
+    }
+
     private func startSlideAnimation() {
-        // Position animation from just left of the view to just right
         let fromX = -lineWidth / 2.0
         let toX = bounds.width + lineWidth / 2.0
 
@@ -35,10 +89,9 @@ final class ExitView: NSView {
         anim.repeatCount = .infinity
         anim.timingFunction = CAMediaTimingFunction(name: .linear)
 
-        // Ensure the model layer is positioned at the start so the animation repeats predictably
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        lineLayer.position.x = fromX
+        lineLayer.position = CGPoint(x: fromX, y: bounds.height / 2.0)
         CATransaction.commit()
 
         lineLayer.add(anim, forKey: "slide")
@@ -46,27 +99,60 @@ final class ExitView: NSView {
 
     override func layout() {
         super.layout()
-        // Update height and restart animation so it adapts to screen size changes
+
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        lineLayer.frame.size.height = bounds.height
+        lineLayer.bounds = CGRect(x: 0, y: 0, width: lineWidth, height: bounds.height)
+        lineLayer.position = CGPoint(x: -lineWidth / 2.0, y: bounds.height / 2.0)
         lineLayer.removeAnimation(forKey: "slide")
-        lineLayer.position.x = -lineWidth / 2.0
         CATransaction.commit()
+
         startSlideAnimation()
     }
 
     override func keyDown(with event: NSEvent) {
-        NSApp.terminate(nil)
+        if event.keyCode == 53 { // Esc
+            NSApp.terminate(nil)
+            return
+        }
+
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+           event.charactersIgnoringModifiers?.lowercased() == "q" {
+            NSApp.terminate(nil)
+            return
+        }
+
+        if event.keyCode == 49 { // Space
+            cycleMode()
+            return
+        }
+
+        super.keyDown(with: event)
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var windows: [NSWindow] = []
+    var windows: [WhiteWindow] = []
+    var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if event.keyCode == 53 {
+                NSApp.terminate(nil)
+                return nil
+            }
+
+            if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
+               event.charactersIgnoringModifiers?.lowercased() == "q" {
+                NSApp.terminate(nil)
+                return nil
+            }
+
+            return event
+        }
+
         for screen in NSScreen.screens {
-            let window = NSWindow(
+            let window = WhiteWindow(
                 contentRect: screen.frame,
                 styleMask: .borderless,
                 backing: .buffered,
@@ -75,25 +161,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
 
             window.backgroundColor = .white
-            // Use normal level so it behaves like a regular window (not a screen-saver/fullscreen)
-            window.level = .normal
+            window.level = .screenSaver
             window.isOpaque = true
             window.hasShadow = false
-            // Allow on all spaces but avoid fullscreen auxiliary behavior
-            window.collectionBehavior = [.canJoinAllSpaces]
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-            let view = ExitView(frame: screen.frame)
+            let view = OverlayView(frame: screen.frame)
             view.wantsLayer = true
-            view.layer?.backgroundColor = NSColor.white.cgColor
             window.contentView = view
 
             window.makeKeyAndOrderFront(nil)
-            // Ensure our view becomes first responder after the window is key
+            window.makeMain()
             window.makeFirstResponder(view)
+
             windows.append(window)
         }
 
         NSApp.activate(ignoringOtherApps: true)
+
+        if let first = windows.first,
+           let view = first.contentView {
+            first.makeKeyAndOrderFront(nil)
+            first.makeMain()
+            first.makeFirstResponder(view)
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
     }
 }
 
