@@ -133,24 +133,8 @@ final class OverlayView: NSView {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var windows: [WhiteWindow] = []
-    var keyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.keyCode == 53 {
-                NSApp.terminate(nil)
-                return nil
-            }
-
-            if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command),
-               event.charactersIgnoringModifiers?.lowercased() == "q" {
-                NSApp.terminate(nil)
-                return nil
-            }
-
-            return event
-        }
-
         for screen in NSScreen.screens {
             let window = WhiteWindow(
                 contentRect: screen.frame,
@@ -184,12 +168,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             first.makeKeyAndOrderFront(nil)
             first.makeMain()
             first.makeFirstResponder(view)
-        }
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        if let keyMonitor {
-            NSEvent.removeMonitor(keyMonitor)
         }
     }
 }
